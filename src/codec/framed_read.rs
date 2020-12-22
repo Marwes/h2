@@ -24,7 +24,11 @@ const DEFAULT_SETTINGS_MAX_HEADER_LIST_SIZE: usize = 16 << 20;
 #[derive(Debug)]
 pub struct FramedRead<T> {
     inner: InnerFramedRead<T, LengthDelimitedCodec>,
+    decoder: Decoder,
+}
 
+#[derive(Debug)]
+struct Decoder {
     // hpack decoder state
     hpack: hpack::Decoder,
 
@@ -53,12 +57,50 @@ impl<T> FramedRead<T> {
     pub fn new(inner: InnerFramedRead<T, LengthDelimitedCodec>) -> FramedRead<T> {
         FramedRead {
             inner,
-            hpack: hpack::Decoder::new(DEFAULT_SETTINGS_HEADER_TABLE_SIZE),
-            max_header_list_size: DEFAULT_SETTINGS_MAX_HEADER_LIST_SIZE,
-            partial: None,
+            decoder: Decoder {
+                hpack: hpack::Decoder::new(DEFAULT_SETTINGS_HEADER_TABLE_SIZE),
+                max_header_list_size: DEFAULT_SETTINGS_MAX_HEADER_LIST_SIZE,
+                partial: None,
+            },
         }
     }
 
+    fn decode_frame(&mut self, bytes: BytesMut) -> Result<Option<Frame>, RecvError> {
+        self.decoder.decode_frame(bytes)
+    }
+
+    pub fn get_ref(&self) -> &T {
+        self.inner.get_ref()
+    }
+
+    pub fn get_mut(&mut self) -> &mut T {
+        self.inner.get_mut()
+    }
+
+    /// Returns the current max frame size setting
+    #[cfg(feature = "unstable")]
+    #[inline]
+    pub fn max_frame_size(&self) -> usize {
+        self.inner.decoder().max_frame_length()
+    }
+
+    /// Updates the max frame size setting.
+    ///
+    /// Must be within 16,384 and 16,777,215.
+    #[inline]
+    pub fn set_max_frame_size(&mut self, val: usize) {
+        assert!(DEFAULT_MAX_FRAME_SIZE as usize <= val && val <= MAX_MAX_FRAME_SIZE as usize);
+        self.inner.decoder_mut().set_max_frame_length(val)
+    }
+
+    /// Update the max header list size setting.
+    #[inline]
+    pub fn set_max_header_list_size(&mut self, val: usize) {
+        self.decoder.max_header_list_size = val;
+    }
+}
+
+impl Decoder {
     fn decode_frame(&mut self, mut bytes: BytesMut) -> Result<Option<Frame>, RecvError> {
         use self::RecvError::*;
         let span = tracing::trace_span!("FramedRead::decode_frame", offset = bytes.len());
@@ -300,36 +342,6 @@ impl<T> FramedRead<T> {
         };
 
         Ok(Some(frame))
-    }
-
-    pub fn get_ref(&self) -> &T {
-        self.inner.get_ref()
-    }
-
-    pub fn get_mut(&mut self) -> &mut T {
-        self.inner.get_mut()
-    }
-
-    /// Returns the current max frame size setting
-    #[cfg(feature = "unstable")]
-    #[inline]
-    pub fn max_frame_size(&self) -> usize {
-        self.inner.decoder().max_frame_length()
-    }
-
-    /// Updates the max frame size setting.
-    ///
-    /// Must be within 16,384 and 16,777,215.
-    #[inline]
-    pub fn set_max_frame_size(&mut self, val: usize) {
-        assert!(DEFAULT_MAX_FRAME_SIZE as usize <= val && val <= MAX_MAX_FRAME_SIZE as usize);
-        self.inner.decoder_mut().set_max_frame_length(val)
-    }
-
-    /// Update the max header list size setting.
-    #[inline]
-    pub fn set_max_header_list_size(&mut self, val: usize) {
-        self.max_header_list_size = val;
     }
 }
 
